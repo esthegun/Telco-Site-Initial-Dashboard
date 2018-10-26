@@ -1,0 +1,252 @@
+---
+title: "LTE RAN Dashboard Sulawesi & North Maluku (Non-Commercial Purpose)"
+
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows 
+    vertical_layout: scroll 
+    
+runtime: shiny
+---
+
+```{r setup, include=FALSE, echo = FALSE} 
+
+library(flexdashboard)
+library(ggplot2)
+library(plotly)
+library(DT)
+library(openxlsx)
+library(dplyr)
+library(leaflet)
+library(leaflet.extras)
+library(shinyjs)
+```
+
+```{r echo=F}
+# Read our dataset in
+
+site <- read.xlsx("4G_W24.xlsx",sheet = "4G_W24")
+
+```
+
+
+```{r echo=F}
+site4G <- site %>%
+  select("Site_ID","Site_Name","Branch","Kabupaten","Longitude","Latitude") %>%
+  unique()
+```
+
+```{r echo=F}
+bdbh <- readxl::read_xls("4G Capacity BDBH W36 2017.xls",sheet = "BDBH")
+```
+
+
+```{r echo=F}
+bdbh$Site_ID <- substr(bdbh$`Cell Name`,1,6)
+
+bdbh4G <- bdbh %>%
+  select("Site_ID","Cell Name", "Max of DL PRB Utilization Rate","Max of Payload DL (MB)")
+  
+bdbh4G <- rename(bdbh4G,"PRB" = "Max of DL PRB Utilization Rate","Payload"="Max of Payload DL (MB)")
+
+
+prb<- aggregate(x = bdbh4G$PRB, list(bdbh4G$Site_ID), FUN= max)
+colnames(prb)<- c("Site_ID", "PRB")
+payload <- aggregate(bdbh4G$Payload, list(bdbh4G$Site_ID), sum)
+colnames(payload) <- c("Site_ID", "Payload")
+
+
+bdbh4G <- merge(prb,payload)
+
+```
+
+```{r echo=F}
+#merge data from 2 tables
+util4G <- merge(site4G[,c("Site_ID","Site_Name","Branch","Kabupaten","Longitude","Latitude")],
+                bdbh4G[,c("Site_ID","PRB","Payload")])
+
+```
+
+
+
+Inputs {.sidebar}
+====================================
+
+
+```{r }
+# shiny inputs defined here
+selectInput(inputId = "Br",
+            label = "Branch:",
+            choices = c("KENDARI","MANADO", "MAKASSAR", "GORONTALO", "PALU", "PARE-PARE"),
+            selected = "MAKASSAR"
+              
+            )
+
+sliderInput(inputId = "rate",
+            label = "PRB Rate:",
+            min = 0,
+            max = 100,
+            
+            value = c(70,100)
+            )
+
+downloadButton(outputId = "downloadData",label = "Download")
+
+
+downloadHandler(filename = 
+   function() {
+   paste("sitelist", '.csv', sep='')
+   },
+     content = function(file) {
+
+       write.csv(x = util4G[util4G$Branch == input$Br &
+                              util4G$PRB >= input$rate[1] &
+                              util4G$PRB <= input$rate[2], ],
+                 file, row.names = FALSE
+       )}
+
+     
+     
+     )
+
+# downloadHandler(filename = input$Br,content = function() {write.csv(x=table, file = "")} ,contentType = csv)
+```
+
+
+Site Distribution
+=====================================
+
+
+Rows 
+-------------------------------------
+    
+### Table-1 LTE Site Information
+    
+```{r }
+
+filteredData <- reactive({
+
+    util4G %>%
+      filter(Branch == input$Br & PRB >= input$rate[1] & PRB <= input$rate[2])
+})
+
+renderLeaflet({
+   leaflet(data = filteredData) %>%
+                       
+    addTiles() %>%
+    addResetMapButton() %>%
+    addMarkers(lng = filteredData()$Longitude, lat = filteredData()$Latitude,
+      clusterOptions = markerClusterOptions(),
+      popup = paste(filteredData()$Site_ID,filteredData()$Site_Name,sep = " ")
+    )
+  
+  
+})
+
+  
+```
+
+
+Row
+-------------------------------------
+   
+### Site Distribution
+
+```{r fig.width=10, fig.height=7}
+
+DT::renderDataTable({
+  
+  DT::datatable(util4G[util4G$Branch == input$Br & 
+                         util4G$PRB >= input$rate[1] &
+                         util4G$PRB <= input$rate[2], ],
+                height = 10,filter = "none", 
+                options = 
+                list(lengthMenu=c(5,10),
+                pageLength=10)
+                  
+              )  
+
+  
+  })
+
+
+```   
+
+ 
+
+
+Site Data Exploration
+==================================
+
+Col
+----------------------------------
+
+### RRC User vs PRB per Branch/Kabupaten
+
+```{r}
+renderPlotly({
+  print(
+    ggplotly(
+
+      util4G %>%
+        filter(PRB >= input$rate[1] & PRB <= input$rate[2] & Branch == input$Br) %>%
+            select(Kabupaten,Branch, PRB, Payload) %>% 
+            group_by(Branch,Kabupaten) %>%
+            summarise(count = n(),Rev = sum(Payload), Congest = mean(PRB)) %>% 
+            arrange(desc(count)) %>% 
+        ggplot(aes(x=Branch,y=count))+
+        theme_bw() +
+        #facet_wrap(~ Branch) +
+        geom_jitter(aes(col=Kabupaten, size=Rev)),alpha=0.5)
+      
+  )
+})
+      
+  # util4G %>%
+  #   filter(PRB >= input$rate[1] & PRB <= input$rate[2] & Branch == input$Br) %>%
+  #   ggplot(aes(x = User, y = PRB, text = Site_Name))+
+  #   theme_bw() +
+  #   facet_wrap(~ Branch) +
+  #   geom_jitter(aes(col=Kabupaten))+
+  #   labs(y = "PRB",
+  #      x = "User",
+  #      title = "RRC User vs PRB per Branch")
+      
+  
+      
+      # util4G %>%
+      #   filter(PRB >= input$rate[1] & PRB <= input$rate[2] & Branch == input$Br) %>%
+      #   ggplot(aes(x = User, y = PRB, text = Site_Name))
+      
+  #  )
+ 
+
+```
+
+ 
+### PRB vs Payload per Branch/Kabupaten
+    
+```{r}
+renderPlotly({
+  print(
+    ggplotly(
+  
+  util4G %>%
+    filter(PRB >= input$rate[1] & PRB <= input$rate[2] & Branch == input$Br) %>%
+    ggplot(aes(x = Payload, y = PRB, text = Site_Name)) +
+    theme_bw() +
+    facet_wrap(~ Branch) +
+    geom_point(aes(color=Kabupaten))+
+    labs(y = "PRB",
+       x = "Payload",
+       title = "Payload vs PRB per Branch")
+    )
+  )
+          })
+```
+
+
+
+
+Prediction Analysis
+==================================

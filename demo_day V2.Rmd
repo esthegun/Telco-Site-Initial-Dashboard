@@ -1,0 +1,614 @@
+---
+title: "Untitled"
+author: "Jefri Zakaria"
+date: "October 20, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#library setup
+```{r}
+library(openxlsx)
+library(dplyr)
+library(ggplot2)
+library(corrplot)
+library(data.table)
+library(caret)
+library(MLmetrics)
+library(tidyverse)
+
+```
+
+#import data
+```{r echo=F}
+# Read our dataset in
+setwd("D:/HO/Private/Course/Data Scientist/Demo Day")
+site <- read.xlsx("4G_W24.xlsx",sheet = "4G_W24")
+#summary(site)
+```
+
+
+```{r echo=F}
+site4G <- site %>%
+  select("Site_ID","Site_Name","Branch","Kabupaten","Longitude","Latitude") %>%
+  unique()
+#summary(site4G)
+```
+
+```{r echo=F}
+bdbh <- readxl::read_xls("4G Capacity BDBH W36 2017.xls",sheet = "BDBH")
+bdbh4G <- bdbh[,-c(1:6,8:10)]
+```
+
+```{r}
+#summary(bdbh4G)
+```
+
+#Data Preprocessing - 1
+```{r}
+setnames(bdbh4G,
+         old = c("Max of [FDD]Cell Availability","Max of [FDD]Average Cell DL PDCP Throughput(Mbps)",
+                 "Max of [FDD]Average Cell UL PDCP Throughput(Mbps)",
+                 "Max of [LTE]Equivalent Downlink Average Throughput(Mbps)",
+                 "Max of [LTE]Equivalent Uplink Average Throughput(Mbps)",
+                 "Max of Cell DL Throughput kbps","Max of Cell UL Throughput kbps",
+                 "Max of DownlinkTrafficVolume_Chatur","Max of UplinkTrafficVolume_Chatur",
+                 "Max of Cell DL PDCP Traffic Average Rate (Mbps)",
+                 "Max of Cell UL PDCP Traffic Average Rate (Mbps)",
+                 "Max of Payload DL (MB)","Max of Payload UL (MB)","Max of DL PRB Utilization Rate",
+                 "Max of UL PRB Utilization Rate","Max Of Mean Number of RRC Connection User",
+                 "Max Of Maximum RRC-Connected User Number",
+                 "MaxOf(LTE)Mean PRB Number Available on PDSCH Channel"
+                 ),
+         new = c("CA","Avg_DL_PDCP(Mbps)","Avg_UL_PDCP(Mbps)", "Equiv_DL(Mbps)",
+                 "Equiv_UL(Mbps)","DL_Thr(kbps)","UL_Thr(kbps)",
+                 "DL_Trf","UL_Trf","DL_PDCP_Trf(Mbps)","UL_PDCP_Trf(Mbps)",
+                 "Payload_DL(MB)","Payload_UL(MB)","DL_PRB_Rate","UL_PRB_Rate",
+                 "Mean_RRC_User","Max_RRC_User","Mean_PRB_Avail"))
+names(bdbh4G)
+```
+
+```{r}
+A <- cor(bdbh4G[,-1])
+corrplot(A, method = 'square', type = 'lower')
+```
+
+```{r}
+highlyCor <- findCorrelation(A, cutoff = 0.8, verbose = T, exact = T)
+```
+
+```{r}
+bdbh4G <- bdbh4G[,-c(3,4,9,10,17,11,12)]
+bdbh4G <- bdbh4G[,-nearZeroVar(bdbh4G)]
+
+str(bdbh4G)
+```
+
+```{r}
+bdbh4G$Site_ID <- substr(bdbh4G$`Cell Name`,1,6)
+str(bdbh4G)
+summary(bdbh4G)
+```
+```{r}
+#library(DataExplorer)
+#create_report(data = bdbh4G[,-c(1,12)],output_file = "report.html")
+```
+
+
+```{r}
+
+prb<- aggregate(x = bdbh4G$DL_PRB_Rate, 
+                list(bdbh4G$Site_ID),
+                FUN= max)
+
+payload <- aggregate(bdbh4G$`Payload_DL(MB)`+bdbh4G$`Payload_UL(MB)`,
+                     list(bdbh4G$Site_ID), sum)
+
+user <- aggregate(bdbh4G$Max_RRC_User,
+                  list(bdbh4G$Site_ID),
+                  sum)
+
+throughput <- aggregate(bdbh4G$`DL_Thr(kbps)`,
+                        list(bdbh4G$Site_ID), 
+                        FUN=sum)
+
+cellnum <- bdbh4G %>%
+  group_by(Site_ID) %>%
+  summarise(count = n())
+  
+
+colnames(prb)<- c("Site_ID", "PRB")
+colnames(payload) <- c("Site_ID", "Payload")
+colnames(user) <- c("Site_ID","User")
+colnames(throughput) <- c("Site_ID","Throughput")
+colnames(cellnum) <- c("Site_ID","cellnum")
+
+bdbh4G <- merge.data.frame(prb,payload)
+bdbh4G <- merge.data.frame(bdbh4G,user)
+bdbh4G <- merge.data.frame(bdbh4G,throughput)
+bdbh4G <- merge.data.frame(bdbh4G,cellnum)
+
+util4G <- merge(site4G[,c("Site_ID","Site_Name","Branch","Kabupaten","Longitude","Latitude")],
+                bdbh4G[,c("Site_ID","PRB","Payload","User","Throughput","cellnum")])
+
+
+util4G$Branch <- as.factor(util4G$Branch)
+util4G$Kabupaten <- as.factor(util4G$Kabupaten)
+
+
+
+
+head(util4G)
+str(util4G)
+summary(util4G)
+
+# util4G.model <- util4G[,-c(1,2,5,6)]
+# 
+# 
+# util4G.model$Cat <- ifelse(util4G.model$Payload >= quantile(util4G.model$Payload,0.75),"High","Not-High")
+# util4G.model$Cat <- factor(util4G.model$Cat)
+# 
+# head(util4G.model)
+
+#View(util4G$Kabupaten)
+
+```
+
+
+```{r}
+# library(ROCR)
+# rf.roc <- data.frame("pred"=util4G.rf.pred,"actual"=util4G.test$Cat)
+# 
+# head(rf.roc)
+# Cat_roc <- ROCR::prediction(as.numeric(rf.roc$pred), as.numeric(rf.roc$actual))  
+# plot(performance(Cat_roc, "tpr", "fpr"))
+```
+
+#Import Data - 2
+```{r}
+
+penduduk_usia <- read.csv("bps_kel_usia.csv")
+penduduk_pendidikan <- read.csv("bps_pendidikan.csv")
+str(penduduk_usia)
+str(penduduk_pendidikan)
+summary(penduduk_usia)
+summary(penduduk_pendidikan)
+```
+
+Data Preprocessing - 2
+```{r}
+penduduk_pendidikan <- penduduk_pendidikan %>%
+  mutate(
+    nama_kabkota = nama_kabkota %>%
+      str_replace_all("Kab. ", "") %>%
+      toupper() 
+  ) 
+
+penduduk_usia <- penduduk_usia %>%
+  mutate(
+    nama_kabkota = nama_kabkota %>%
+      str_replace_all("Kab. ", "") %>%
+      toupper()
+  )
+
+
+ratioPria <- penduduk_usia %>%
+  mutate(
+    kelompok_usia = kelompok_usia %>%
+      substring(1, 2) %>% 
+      str_replace_all("-", "") %>%
+      as.numeric(),
+    kelompok_usia = ifelse(
+      kelompok_usia >= 20 & kelompok_usia <= 55,
+      "Produktif",
+      "NonProduktif"
+    )
+  ) %>%
+  select(nama_kabkota, kelompok_usia, penduduk_pria) %>% 
+  group_by(nama_kabkota, kelompok_usia) %>% 
+  summarise(
+    penduduk_pria = sum(penduduk_pria)
+  ) %>%
+  ungroup() %>% 
+  spread(key = kelompok_usia, value = penduduk_pria) %>% 
+  mutate(
+    ratioPriaProd = Produktif / (Produktif + NonProduktif)
+  )%>% 
+  select(Kabupaten = nama_kabkota, ratioPriaProd)
+
+
+
+ratioWanita <- penduduk_usia %>%
+  mutate(
+    kelompok_usia = kelompok_usia %>%
+      substring(1, 2) %>% 
+      str_replace_all("-", "") %>%
+      as.numeric(),
+    kelompok_usia = ifelse(
+      kelompok_usia >= 20 & kelompok_usia <= 55,
+      "Produktif",
+      "NonProduktif"
+    )
+  ) %>%
+  select(nama_kabkota, kelompok_usia, penduduk_wanita) %>% 
+  group_by(nama_kabkota, kelompok_usia) %>% 
+  summarise(
+    penduduk_wanita = sum(penduduk_wanita)
+  ) %>%
+  ungroup() %>% 
+  spread(key = kelompok_usia, value = penduduk_wanita) %>% 
+  mutate(
+    ratioWanProd = Produktif / (Produktif + NonProduktif)
+  ) %>% 
+  select(Kabupaten = nama_kabkota, ratioWanProd)
+
+
+ratioWanDidik <- penduduk_pendidikan %>%
+  mutate(
+    tingkat_pendidikan =
+      ifelse(
+        tingkat_pendidikan == "Tidak/Belum Tamat SD" |
+        tingkat_pendidikan == "Tamat SD",
+        "NonPendidikan",
+        "Pendidikan"
+        )
+  ) %>% 
+  select(nama_kabkota, tingkat_pendidikan, jumlah_perempuan) %>% 
+  group_by(nama_kabkota, tingkat_pendidikan) %>% 
+  summarise(
+    jumlah_perempuan = sum(jumlah_perempuan)
+  ) %>% 
+  ungroup() %>% 
+  spread(key=tingkat_pendidikan, value = jumlah_perempuan) %>% 
+  mutate(
+    ratioWanDidik = Pendidikan/(Pendidikan + NonPendidikan)
+  ) %>% 
+  select(Kabupaten = nama_kabkota, ratioWanDidik)
+
+
+ratioPriaDidik <- penduduk_pendidikan %>%
+  mutate(
+    tingkat_pendidikan =
+      ifelse(
+        tingkat_pendidikan == "Tidak/Belum Tamat SD" |
+        tingkat_pendidikan == "Tamat SD",
+        "NonPendidikan",
+        "Pendidikan"
+        )
+  ) %>% 
+  select(nama_kabkota, tingkat_pendidikan, jumlah_laki_laki) %>% 
+  group_by(nama_kabkota, tingkat_pendidikan) %>% 
+  summarise(
+    jumlah_laki_laki = sum(jumlah_laki_laki)
+  ) %>% 
+  ungroup() %>% 
+  spread(key=tingkat_pendidikan, value = jumlah_laki_laki) %>% 
+  mutate(
+    ratioPriaDidik = Pendidikan/(Pendidikan + NonPendidikan)
+  ) %>% 
+  select(Kabupaten = nama_kabkota, ratioPriaDidik)
+
+summary(ratioPriaDidik)
+
+
+util4G <- util4G %>% 
+  left_join(ratioPria, by = "Kabupaten") %>% 
+  left_join(ratioWanita, by = "Kabupaten") %>%
+  left_join(ratioPriaDidik, by = "Kabupaten") %>% 
+  left_join(ratioWanDidik, by = "Kabupaten") %>% 
+  na.omit()
+
+
+
+summary(util4G)
+util4G
+```
+
+```{r}
+pdb <- read.csv("bps_pdb.csv")
+
+pdb <- pdb %>%
+  select("Kabupaten"= "Provinsi...Kabupaten...Kota","PDB"="X2017") %>%
+  mutate(
+    PDB = PDB %>%
+      as.character() %>% as.numeric()
+  ) %>%
+  na.omit()
+
+pdb <- pdb %>% 
+  distinct(Kabupaten,.keep_all = TRUE)
+
+
+RTinternet <- read.csv("bps_RT_internet.csv")
+
+RTinternet <- RTinternet %>% 
+  mutate(
+    nama_kabkota = nama_kabkota %>% 
+      str_replace_all("Kab. ","") %>% 
+      toupper()
+  ) %>% 
+  select("Kabupaten" = "nama_kabkota","ruta_berinternet")
+
+
+# e <- unique(pdb$Kabupaten)
+# d <- unique(util4G$Kabupaten)
+# d %in% e
+
+
+util4G <- util4G %>% 
+  left_join(pdb, by = "Kabupaten") %>%
+  left_join(RTinternet, by = "Kabupaten") %>% 
+  na.omit()
+
+util4G$Kabupaten <- as.factor(util4G$Kabupaten)
+
+str(util4G)
+summary(util4G)
+util4G
+```
+
+```{r}
+util4G <- util4G %>%
+  group_by(Kabupaten) %>% 
+  summarise(
+    q3Payload = quantile(Payload,0.75),
+    Payload = max(Payload)
+  ) %>% 
+  select(-Payload) %>% 
+  right_join(
+    util4G
+  ) %>% 
+  mutate(
+    target = as.factor(ifelse(Payload >= q3Payload, "onTarget", "notOnTarget"))
+  ) 
+
+util4G
+summary(util4G)
+str(util4G)
+
+
+```
+
+
+```{r}
+#melihat korelasi
+B <- cor(util4G[,-c(1,3:7,19)])
+corrplot(B, method = 'square', type = 'lower')
+```
+
+
+
+
+#Modeling - 2
+```{r}
+#membuat model
+
+#train-test
+set.seed(100)
+sample <- sample(x = nrow(util4G),nrow(util4G)*0.8)
+train <- util4G[sample,] %>%
+  select(-c(q3Payload,Site_ID,Site_Name,PRB,Payload,
+            Throughput,Longitude,Latitude,ratioWanProd,ratioWanDidik) )
+test <- util4G[-sample,] %>%
+  select(-c(q3Payload,Site_ID,Site_Name,PRB,Payload,
+            Throughput,Longitude,Latitude,ratioWanProd,ratioWanDidik) )
+
+head(train)
+str(train)
+str(test)
+```
+
+```{r}
+# nearZeroVar(train)
+# train <- train[,nearZeroVar(train)]
+```
+
+
+#RF
+```{r}
+#random-forest
+util4G.rf <- train(target ~ .,
+                   data = train,
+                   method = "ranger")
+plot(util4G.rf)
+```
+
+#Predict to train
+```{r}
+
+#predict rf
+util4G.rf.pred <- predict(util4G.rf,train[,-9])
+
+table("prediction"=util4G.rf.pred, "actual"=train$target)
+confusionMatrix(table("prediction"=util4G.rf.pred, "actual"=train$target))
+```
+
+#Predict to test
+```{r}
+rf.pred.test <- predict(util4G.rf,test[,-9])
+
+table("prediction"=rf.pred.test, "actual"=test$target)
+confusionMatrix(table("prediction"=rf.pred.test, "actual"=test$target))
+```
+
+#Modeling -3 
+```{r}
+library(DataExplorer)
+DataExplorer::create_report(train)
+
+```
+
+```{r}
+train.no.nzv.pca <- preProcess(select(train, -target),
+                        method = c("center", "scale", "YeoJohnson", "nzv", "pca"))
+
+train.no.nzv.pca
+```
+
+```{r}
+# identify which variables were ignored, centered, scaled, etc
+train.no.nzv.pca$method
+```
+```{r}
+# identify the principal components
+train.no.nzv.pca$rotation
+```
+
+```{r}
+set.seed(998)
+# create a testing and training set
+in_training <- createDataPartition(util4G$target, p = .80, list = FALSE)
+train.rf.3 <- util4G[ in_training,] %>%
+  select(-c(q3Payload,Site_ID,Site_Name,PRB,Payload,
+            Throughput,Longitude,Latitude,ratioWanProd,ratioWanDidik))
+test.rf.3  <- util4G[-in_training,] %>%
+  select(-c(q3Payload,Site_ID,Site_Name,PRB,Payload,
+            Throughput,Longitude,Latitude,ratioWanProd,ratioWanDidik))
+str(train.rf.3)
+```
+
+```{r}
+# specify that the resampling method is 
+# fit_control <- trainControl(## 10-fold CV
+#                            method = "cv",
+#                            number = 500)
+
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 10,
+                           repeats = 10)
+
+
+set.seed(825)
+gbmFit1 <- train(target ~ ., data = train.rf.3, 
+                 method = "gbm", 
+                 trControl = fitControl,
+                 ## This last option is actually one
+                 ## for gbm() that passes through
+                 verbose = FALSE)
+gbmFit1
+trellis.par.set(caretTheme())
+plot(gbmFit1)
+
+```
+
+#Predict
+```{r}
+
+#predict rf
+util4G.rf.pred3 <- predict(gbmFit1,test.rf.3[,-9])
+
+confusionMatrix(table("prediction"=util4G.rf.pred3, "actual"=test.rf.3$target))
+```
+
+#Plot Collections
+```{r}
+
+plot1 <- util4G %>%
+  group_by(Kabupaten) %>%
+  #group_by(Kabupaten) %>%
+  summarise(payload = sum(Payload)/1000000,
+            PLperCell = mean(Payload/1000000/cellnum)
+            
+  )
+plot1
+ggplot(plot1[plot1$payload >= 1.5,], aes(payload,PLperCell)) +
+  geom_jitter(aes(size = payload, col=Kabupaten)) +
+  theme(legend.position = "none")
+
+ggplot(plot1[plot1$payload >= 1.5,], aes(Kabupaten, payload)) +
+  geom_col(aes(fill=PLperCell))+
+  coord_flip()
+
+
+ggplot(util4G, aes(x = Branch, y = Payload)) +
+  geom_jitter(aes(col= PRB))
+
+
+ggplot(util4G.model, aes(User,cellnum)) +
+  geom_jitter(aes(col=Cat))
+
+ggplot(util4G.model,aes(Cat,PRB))+
+  theme_bw() +
+  facet_wrap(~ Branch) +
+  geom_jitter(aes(col=User))+
+  labs(y = "PRB",
+       x = "Category",
+       title = "Payload Category vs PRB per Branch")
+
+ggplot(util4G[util4G$PRB>=80,],aes(User,PRB))+
+  theme_bw() +
+  facet_wrap(~ Branch) +
+  geom_jitter(aes(col=Payload))+
+  labs(y = "PRB",
+       x = "User",
+       title = "RRC User vs PRB per Branch")
+
+util4G
+ggplot(util4G, aes(PDB, ruta_berinternet))+
+  theme_bw()+
+  facet_wrap(~ Branch) +
+  geom_jitter(aes(col=Kabupaten))+
+  theme(legend.position = "none")+
+  labs(y = "PDB",
+       x = "ruta_berinternet",
+       title = "PDB vs ruta_berinternet per Branch")
+
+ggplot(util4G, aes(Branch,cellnum))+
+  theme_bw()+
+#  facet_wrap(~ Branch) +
+  geom_col(aes(fill=target))
+# +
+#   theme(legend.position = "none")
+  
+
+```
+
+```{r}
+#plot1: jumlah site distribution per kab/branch
+util4G
+plot1 <- util4G %>%
+  select(Kabupaten,Branch,ruta_berinternet) %>% 
+  group_by(Branch, Kabupaten) %>%
+  summarise(count = n(),
+            populasi = sum(ruta_berinternet)) %>% 
+  arrange(desc(count))
+
+
+plot(plot1)
+
+ggplot(util4G, aes(Branch,ruta_berinternet)) +
+  geom_jitter(aes(col=Kabupaten))+
+  theme_bw() +
+  theme(legend.position = "none")
+#   +
+#   facet_wrap(~ Branch) 
+# # +
+#   geom_jitter(aes(col=Payload))+
+#   labs(y = "PRB",
+#        x = "User",
+#        title = "RRC User vs PRB per Branch")
+  
+plot1
+ggplot(plot1, aes(x=Branch,y=populasi))+
+  geom_jitter(aes(size=count, col=populasi),alpha=0.5)
+```
+
+
+```{r}
+library(leaflet)
+library(leaflet.extras)
+library(leaflet.esri)
+str(util4G)
+  leaflet(data = util4G) %>%
+    
+    addTiles() %>%
+    addResetMapButton() %>%
+     
+    
+    
+    addMarkers(lng = ~Longitude,~Latitude,clusterOptions = markerClusterOptions(),
+             popup = ~as.character(paste(Site_ID,Site_Name,sep = " ")))
+```
